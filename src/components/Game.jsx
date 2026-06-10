@@ -1,0 +1,67 @@
+import { useEffect, useReducer } from 'react'
+import { Canvas } from '@react-three/fiber'
+import Canyon from './Canyon.jsx'
+import Player from './Player.jsx'
+import { gameState } from '../game/state.js'
+import './Game.css'
+
+function formatTime(ms) {
+  const total = ms / 1000
+  const m = Math.floor(total / 60)
+  const s = (total % 60).toFixed(1).padStart(4, '0')
+  return `${m}:${s}`
+}
+
+function Hud() {
+  const [, tick] = useReducer((c) => c + 1, 0)
+  useEffect(() => {
+    const id = setInterval(tick, 100)
+    return () => clearInterval(id)
+  }, [])
+
+  const elapsed = gameState.finished
+    ? gameState.finishTime
+    : performance.now() - gameState.startTime
+
+  return (
+    <div className="hud">
+      <div className="hud-top">
+        <div className="hud-time">{formatTime(elapsed)}</div>
+        <div className="hud-progress">
+          {Math.min(100, Math.round(gameState.progress * 100))}%
+        </div>
+      </div>
+      <div className="hud-speed">
+        {Math.round(gameState.speed * 4)}
+        <span> km/h</span>
+      </div>
+      <div className="hud-help">W / ↑ throttle · A D / ← → steer · S / ↓ brake · R restart</div>
+      {gameState.finished && (
+        <div className="hud-finish">
+          <div className="hud-finish-title">FINISH</div>
+          <div className="hud-finish-time">{formatTime(gameState.finishTime)}</div>
+          <div className="hud-finish-hint">press R to race again</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function Game() {
+  return (
+    <div className="game">
+      <Canvas
+        dpr={[1, 1.5]}
+        camera={{ fov: 70, near: 0.1, far: 700, position: [0, 5, 12] }}
+      >
+        <color attach="background" args={['#e6c08c']} />
+        <fog attach="fog" args={['#dcb27e', 60, 440]} />
+        <ambientLight intensity={0.65} color="#ffe8c8" />
+        <directionalLight position={[60, 90, 30]} intensity={1.4} color="#fff2dd" />
+        <Canyon />
+        <Player />
+      </Canvas>
+      <Hud />
+    </div>
+  )
+}

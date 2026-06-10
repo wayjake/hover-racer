@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- dusty sky -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e6c08c"/>
+      <stop offset="1" stop-color="#dcb27e"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="url(#sky)"/>
+
+  <!-- sun -->
+  <circle cx="32" cy="22" r="9" fill="#fff2dd" opacity="0.9"/>
+
+  <!-- far canyon walls, hazy -->
+  <path d="M0 34 L10 18 L18 30 L24 22 L30 34 V64 H0 Z" fill="#c79a63"/>
+  <path d="M64 34 L56 16 L48 28 L42 21 L36 34 V64 H64 Z" fill="#c2945e"/>
+
+  <!-- near canyon walls -->
+  <path d="M0 42 L8 26 L15 38 L20 32 L25 44 V64 H0 Z" fill="#b5824c"/>
+  <path d="M64 42 L57 24 L50 36 L45 30 L39 44 V64 H64 Z" fill="#ad7a46"/>
+
+  <!-- canyon floor -->
+  <path d="M25 64 L29 40 H35 L39 64 Z" fill="#a87f4e"/>
+
+  <!-- engine glow trail -->
+  <path d="M30 62 L32 48 L34 62 Z" fill="#ffae5e" opacity="0.85"/>
+
+  <!-- hovercraft: twin engines + binder + pod, seen from behind -->
+  <g>
+    <rect x="24.5" y="42" width="5" height="6" rx="2.2" fill="#5a4632"/>
+    <rect x="34.5" y="42" width="5" height="6" rx="2.2" fill="#5a4632"/>
+    <circle cx="27" cy="45" r="1.6" fill="#ffb347"/>
+    <circle cx="37" cy="45" r="1.6" fill="#ffb347"/>
+    <rect x="29" y="43.2" width="6" height="1.4" rx="0.7" fill="#c77dff"/>
+    <ellipse cx="32" cy="49.5" rx="2.6" ry="2" fill="#3d342a"/>
+  </g>
+</svg>
