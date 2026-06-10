@@ -257,11 +257,14 @@ export default function Player() {
       s.speed *= Math.max(0, 1 - (0.6 + 6 * align) * dt)
       const intensity = Math.min(1, (s.speed / MAX_SPEED) * (0.25 + align * 1.5))
 
-      // chips fly off the wall, away from it and along our travel
-      hitPoint.set(sp.x + n.x * lim * 1.1, s.y + 0.4, sp.z + n.z * lim * 1.1)
-      hitDir.set(-n.x * side + forward.x, 0.7, -n.z * side + forward.z)
-      emitDebris(hitPoint, hitDir, 1 + Math.round(intensity * 4), 4 + intensity * 9, 'rock')
-      playScrape(intensity)
+      // chips fly off the wall, away from it and along our travel — but
+      // only when we're actually grinding, not resting against it
+      if (s.speed > 3) {
+        hitPoint.set(sp.x + n.x * lim * 1.1, s.y + 0.4, sp.z + n.z * lim * 1.1)
+        hitDir.set(-n.x * side + forward.x, 0.7, -n.z * side + forward.z)
+        emitDebris(hitPoint, hitDir, 1 + Math.round(intensity * 4), 4 + intensity * 9, 'rock')
+        playScrape(intensity)
+      }
 
       // grind the part on the wall side; square hits also hurt the pod
       const part = side > 0 ? 'left' : 'right'
