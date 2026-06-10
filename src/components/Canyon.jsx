@@ -5,7 +5,8 @@ import {
   tangents,
   normals,
   COUNT,
-  HALF_WIDTH,
+  heights,
+  halfWidths,
   mulberry32,
 } from '../game/track.js'
 
@@ -23,12 +24,13 @@ function buildWall(side) {
     const idx = i * STEP
     const p = samples[idx]
     const norm = normals[idx]
-    const base = HALF_WIDTH + 2.5 + rand() * 3
+    const h = heights[idx]
+    const base = halfWidths[idx] + 2.5 + rand() * 3
     const height = 16 + rand() * 14
     const rows = [
-      [base, 0],
-      [base + 2 + rand() * 3, height * 0.45],
-      [base + 6 + rand() * 5, height],
+      [base, -1], // sunk below the desert floor so elevated track never shows gaps
+      [base + 2 + rand() * 3, h + height * 0.45],
+      [base + 6 + rand() * 5, h + height],
     ]
     for (const [off, y] of rows) {
       positions.push(p.x + norm.x * off * side, y, p.z + norm.z * off * side)
@@ -51,7 +53,8 @@ function buildWall(side) {
   return geo
 }
 
-// Darker strip on the ground marking the raceable corridor
+// Darker strip following the track's elevation and width, with sloped
+// shoulders dropping toward the desert floor so hills read as solid ground
 function buildTrackSurface() {
   const positions = []
   const indices = []
@@ -61,14 +64,25 @@ function buildTrackSurface() {
     const idx = i * STEP
     const p = samples[idx]
     const norm = normals[idx]
-    positions.push(
-      p.x - norm.x * HALF_WIDTH, 0.03, p.z - norm.z * HALF_WIDTH,
-      p.x + norm.x * HALF_WIDTH, 0.03, p.z + norm.z * HALF_WIDTH,
-    )
+    const hw = halfWidths[idx]
+    const h = heights[idx]
+    const shoulderY = Math.max(h - 6, -0.05)
+    const cols = [
+      [-(hw + 3.5), shoulderY],
+      [-hw, h + 0.03],
+      [hw, h + 0.03],
+      [hw + 3.5, shoulderY],
+    ]
+    for (const [off, y] of cols) {
+      positions.push(p.x + norm.x * off, y, p.z + norm.z * off)
+    }
   }
   for (let i = 0; i < n - 1; i++) {
-    const a = i * 2
-    indices.push(a, a + 2, a + 1, a + 2, a + 3, a + 1)
+    for (let c = 0; c < 3; c++) {
+      const a = i * 4 + c
+      const b = (i + 1) * 4 + c
+      indices.push(a, b, a + 1, b, b + 1, a + 1)
+    }
   }
 
   const geo = new THREE.BufferGeometry()
@@ -88,7 +102,7 @@ function Rocks() {
     for (let i = 0; i < COUNT; i += 4) {
       for (const side of [-1, 1]) {
         if (rand() < 0.25) continue
-        const off = HALF_WIDTH + 5 + rand() * 22
+        const off = halfWidths[i] + 5 + rand() * 22
         const p = samples[i]
         const norm = normals[i]
         list.push({
@@ -153,19 +167,20 @@ function FinishGate() {
   const idx = COUNT - 12
   const p = samples[idx]
   const t = tangents[idx]
+  const hw = halfWidths[idx]
   const heading = Math.atan2(-t.x, -t.z)
   return (
-    <group position={[p.x, 0, p.z]} rotation={[0, heading, 0]}>
-      <mesh position={[-HALF_WIDTH, 5, 0]}>
+    <group position={[p.x, heights[idx], p.z]} rotation={[0, heading, 0]}>
+      <mesh position={[-hw, 5, 0]}>
         <boxGeometry args={[1.2, 10, 1.2]} />
         <meshStandardMaterial color="#5a4632" />
       </mesh>
-      <mesh position={[HALF_WIDTH, 5, 0]}>
+      <mesh position={[hw, 5, 0]}>
         <boxGeometry args={[1.2, 10, 1.2]} />
         <meshStandardMaterial color="#5a4632" />
       </mesh>
       <mesh position={[0, 9.5, 0]}>
-        <boxGeometry args={[HALF_WIDTH * 2 + 1.2, 1.6, 0.6]} />
+        <boxGeometry args={[hw * 2 + 1.2, 1.6, 0.6]} />
         <meshBasicMaterial color="#ffb347" />
       </mesh>
     </group>

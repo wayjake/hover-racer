@@ -80,7 +80,7 @@ export function initAudio() {
   engineBus.connect(master)
 
   musicBus = ctx.createGain()
-  musicBus.gain.value = 0.5
+  musicBus.gain.value = 0.9
   musicBus.connect(master)
 
   // shared echo for lead notes
@@ -171,6 +171,7 @@ function buildEngine() {
 // f: 0..1 speed factor; boost: whether the booster is firing
 export function setEngine(f, boost) {
   if (!engine) return
+  f = Math.min(f, 1)
   const t = ctx.currentTime
   const k = 0.06
   const base = 42 + f * 150 + (boost ? 50 : 0)
@@ -178,9 +179,10 @@ export function setEngine(f, boost) {
   engine.oscB.frequency.setTargetAtTime(base * 1.01, t, k)
   engine.whine.frequency.setTargetAtTime(base * 6, t, k)
   engine.filter.frequency.setTargetAtTime(320 + f * 2800 + (boost ? 1500 : 0), t, k)
-  engine.out.gain.setTargetAtTime(0.07 + f * 0.16 + (boost ? 0.08 : 0), t, k)
-  engine.whineGain.gain.setTargetAtTime(0.015 + f * 0.05 + (boost ? 0.07 : 0), t, k)
-  engine.noiseGain.gain.setTargetAtTime(0.02 + f * 0.12 + (boost ? 0.06 : 0), t, k)
+  // quadratic curves keep cruise speeds quiet under the music; boost still roars
+  engine.out.gain.setTargetAtTime(0.06 + f * f * 0.13 + (boost ? 0.1 : 0), t, k)
+  engine.whineGain.gain.setTargetAtTime(0.01 + f * f * 0.045 + (boost ? 0.06 : 0), t, k)
+  engine.noiseGain.gain.setTargetAtTime(0.015 + f * f * 0.1 + (boost ? 0.07 : 0), t, k)
 }
 
 // ----------------------------------------------------------------- music ---
@@ -235,7 +237,7 @@ function scheduleStep(track, st, time, stepDur) {
   if (h < track.leadDensity) {
     const deg = track.scale[Math.floor(hash(st * 13 + 5) * track.scale.length)]
     const octave = h < track.leadDensity / 3 ? 4 : 2
-    note(time, track.root * octave * 2 ** (deg / 12), stepDur * 3, track.leadWave, 0.06, delayIn)
+    note(time, track.root * octave * 2 ** (deg / 12), stepDur * 3, track.leadWave, 0.08, delayIn)
   }
 
   if (track.hat && st % 2 === 1) hat(time)
