@@ -74,13 +74,19 @@ export function initAudio() {
 
   master = ctx.createGain()
   master.gain.value = MASTER_VOL
-  master.connect(ctx.destination)
+  // compressor glues the mix and stops the engine drowning the music
+  const comp = ctx.createDynamicsCompressor()
+  comp.threshold.value = -18
+  comp.ratio.value = 6
+  master.connect(comp)
+  comp.connect(ctx.destination)
 
   engineBus = ctx.createGain()
+  engineBus.gain.value = 0.6
   engineBus.connect(master)
 
   musicBus = ctx.createGain()
-  musicBus.gain.value = 0.9
+  musicBus.gain.value = 1.5
   musicBus.connect(master)
 
   // shared echo for lead notes
@@ -226,21 +232,37 @@ function scheduler() {
 }
 
 function scheduleStep(track, st, time, stepDur) {
+  // kick on every beat — rhythmic punch the engine can't mask
+  if (st % 4 === 0) kick(time)
+
   // bass riff on quarter notes
   if (st % 2 === 0) {
     const semis = track.bass[(st >> 1) % track.bass.length]
-    note(time, track.root * 2 ** (semis / 12), stepDur * 1.8, track.bassWave, 0.15, musicBus)
+    note(time, track.root * 2 ** (semis / 12), stepDur * 1.8, track.bassWave, 0.3, musicBus)
   }
 
-  // sparse lead melody, deterministic per track so phrases repeat
+  // lead melody an octave up so it sits above the engine's spectrum
   const h = hash(st * 7 + trackIdx * 131)
   if (h < track.leadDensity) {
     const deg = track.scale[Math.floor(hash(st * 13 + 5) * track.scale.length)]
-    const octave = h < track.leadDensity / 3 ? 4 : 2
-    note(time, track.root * octave * 2 ** (deg / 12), stepDur * 3, track.leadWave, 0.08, delayIn)
+    const octave = h < track.leadDensity / 3 ? 8 : 4
+    note(time, track.root * octave * 2 ** (deg / 12), stepDur * 3, track.leadWave, 0.16, delayIn)
   }
 
-  if (track.hat && st % 2 === 1) hat(time)
+  if (st % 2 === 1) hat(time, track.hat ? 0.09 : 0.05)
+}
+
+function kick(time) {
+  const osc = ctx.createOscillator()
+  const g = ctx.createGain()
+  osc.frequency.setValueAtTime(160, time)
+  osc.frequency.exponentialRampToValueAtTime(42, time + 0.1)
+  g.gain.setValueAtTime(0.55, time)
+  g.gain.exponentialRampToValueAtTime(0.001, time + 0.18)
+  osc.connect(g)
+  g.connect(musicBus)
+  osc.start(time)
+  osc.stop(time + 0.2)
 }
 
 function note(time, freq, dur, wave, vol, dest) {
@@ -257,14 +279,14 @@ function note(time, freq, dur, wave, vol, dest) {
   osc.stop(time + dur + 0.1)
 }
 
-function hat(time) {
+function hat(time, vol = 0.09) {
   const src = ctx.createBufferSource()
   src.buffer = sharedNoise
   const f = ctx.createBiquadFilter()
   f.type = 'highpass'
   f.frequency.value = 6000
   const g = ctx.createGain()
-  g.gain.setValueAtTime(0.045, time)
+  g.gain.setValueAtTime(vol, time)
   g.gain.exponentialRampToValueAtTime(0.0001, time + 0.05)
   src.connect(f)
   f.connect(g)
@@ -277,7 +299,7 @@ function hat(time) {
 function startDrone(track) {
   const g = ctx.createGain()
   g.gain.value = 0
-  g.gain.setTargetAtTime(0.045, ctx.currentTime, 1.5)
+  g.gain.setTargetAtTime(0.07, ctx.currentTime, 1.5)
   g.connect(musicBus)
   const oscs = [track.root / 2, (track.root / 2) * 1.498].map((freq) => {
     const o = ctx.createOscillator()
@@ -296,4 +318,60 @@ function stopDrone() {
   g.gain.setTargetAtTime(0, ctx.currentTime, 0.5)
   oscs.forEach((o) => o.stop(ctx.currentTime + 2))
   drone = null
+}
+
+// ------------------------------------------------------------------ sfx ---
+
+let lastScrape = 0
+
+// Gritty noise burst when grinding the canyon wall; intensity 0..1
+export function playScrape(intensity) {
+  if (!ctx || ctx.currentTime - lastScrape < 0.09) return
+  lastScrape = ctx.currentTime
+  const t = ctx.currentTime
+  const src = ctx.createBufferSource()
+  src.buffer = sharedNoise
+  const f = ctx.createBiquadFilter()
+  f.type = 'bandpass'
+  f.frequency.value = 500 + Math.random() * 1500
+  f.Q.value = 1.2
+  const g = ctx.createGain()
+  g.gain.setValueAtTime(0.05 + intensity * 0.22, t)
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.12)
+  src.connect(f)
+  f.connect(g)
+  g.connect(master)
+  src.start(t, Math.random())
+  src.stop(t + 0.15)
+}
+
+// Deep boom + noise blast when a part of the ship explodes
+export function playExplosion() {
+  if (!ctx) return
+  const t = ctx.currentTime
+  const boom = ctx.createOscillator()
+  boom.frequency.setValueAtTime(120, t)
+  boom.frequency.exponentialRampToValueAtTime(28, t + 0.7)
+  const bg = ctx.createGain()
+  bg.gain.setValueAtTime(0.9, t)
+  bg.gain.exponentialRampToValueAtTime(0.001, t + 1.1)
+  boom.connect(bg)
+  bg.connect(master)
+  boom.start(t)
+  boom.stop(t + 1.2)
+
+  const src = ctx.createBufferSource()
+  src.buffer = sharedNoise
+  const f = ctx.createBiquadFilter()
+  f.type = 'lowpass'
+  f.frequency.setValueAtTime(5000, t)
+  f.frequency.exponentialRampToValueAtTime(300, t + 0.9)
+  const g = ctx.createGain()
+  g.gain.setValueAtTime(0.7, t)
+  g.gain.exponentialRampToValueAtTime(0.001, t + 1)
+  src.connect(f)
+  f.connect(g)
+  g.connect(master)
+  src.start(t)
+  src.stop(t + 1.1)
 }

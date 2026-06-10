@@ -8,6 +8,10 @@ export const gameState = {
   startTime: performance.now(),
   finished: false,
   finishTime: 0,
+  // per-part hull integrity, 0..1; a part at 0 explodes and ends the run
+  health: { left: 1, right: 1, pod: 1 },
+  crashed: false,
+  crashPart: null, // 'left' | 'right' | 'pod'
 }
 
 export function resetGameState() {
@@ -18,4 +22,9 @@ export function resetGameState() {
   gameState.startTime = performance.now()
   gameState.finished = false
   gameState.finishTime = 0
+  gameState.health.left = 1
+  gameState.health.right = 1
+  gameState.health.pod = 1
+  gameState.crashed = false
+  gameState.crashPart = null
 }

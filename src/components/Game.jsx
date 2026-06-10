@@ -2,6 +2,7 @@ import { useEffect, useReducer } from 'react'
 import { Canvas } from '@react-three/fiber'
 import Canyon from './Canyon.jsx'
 import Player from './Player.jsx'
+import Debris from './Debris.jsx'
 import { gameState } from '../game/state.js'
 import { audioState } from '../game/audio.js'
 import './Game.css'
@@ -42,6 +43,31 @@ function Hud() {
           style={{ width: `${Math.round(gameState.boost * 100)}%` }}
         />
       </div>
+      <div className="hud-health">
+        {[
+          ['left', 'L ENG'],
+          ['pod', 'POD'],
+          ['right', 'R ENG'],
+        ].map(([part, label]) => (
+          <div className="hud-health-part" key={part}>
+            <div className="hud-health-bar">
+              <div
+                className="hud-health-fill"
+                data-low={gameState.health[part] < 0.35 || undefined}
+                style={{ width: `${Math.round(gameState.health[part] * 100)}%` }}
+              />
+            </div>
+            <span>{label}</span>
+          </div>
+        ))}
+      </div>
+      {gameState.crashed && (
+        <div className="hud-crash">
+          {gameState.crashPart === 'pod'
+            ? 'POD DESTROYED'
+            : `${gameState.crashPart === 'left' ? 'LEFT' : 'RIGHT'} ENGINE DESTROYED`}
+        </div>
+      )}
       <div className="hud-music">
         ♪ {audioState.ready
           ? audioState.muted
@@ -76,6 +102,7 @@ export default function Game() {
         <directionalLight position={[60, 90, 30]} intensity={1.4} color="#fff2dd" />
         <Canyon />
         <Player />
+        <Debris />
       </Canvas>
       <Hud />
     </div>

@@ -25,12 +25,14 @@ function buildWall(side) {
     const p = samples[idx]
     const norm = normals[idx]
     const h = heights[idx]
-    const base = halfWidths[idx] + 2.5 + rand() * 3
+    // base starts inside the dirt shoulder and below the surface so the
+    // wall always overlaps the track — no cracks at any elevation
+    const base = halfWidths[idx] + 0.8 + rand() * 1.5
     const height = 16 + rand() * 14
     const rows = [
-      [base, -1], // sunk below the desert floor so elevated track never shows gaps
-      [base + 2 + rand() * 3, h + height * 0.45],
-      [base + 6 + rand() * 5, h + height],
+      [base, Math.min(h - 4, -1)],
+      [base + 3 + rand() * 3, h + height * 0.45],
+      [base + 7 + rand() * 5, h + height],
     ]
     for (const [off, y] of rows) {
       positions.push(p.x + norm.x * off * side, y, p.z + norm.z * off * side)
@@ -66,7 +68,7 @@ function buildTrackSurface() {
     const norm = normals[idx]
     const hw = halfWidths[idx]
     const h = heights[idx]
-    const shoulderY = Math.max(h - 6, -0.05)
+    const shoulderY = Math.max(h - 6, -0.6) // dips below the desert plane
     const cols = [
       [-(hw + 3.5), shoulderY],
       [-hw, h + 0.03],

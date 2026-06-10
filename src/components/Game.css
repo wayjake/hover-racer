@@ -71,6 +71,64 @@
   box-shadow: 0 0 10px #bfe6ff;
 }
 
+.hud-health {
+  position: absolute;
+  bottom: 92px;
+  left: 20px;
+  display: flex;
+  gap: 8px;
+}
+
+.hud-health-part {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hud-health-part span {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+}
+
+.hud-health-bar {
+  width: 48px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(45, 28, 10, 0.45);
+  overflow: hidden;
+}
+
+.hud-health-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: #8fe388;
+  transition: width 0.1s linear;
+}
+
+.hud-health-fill[data-low] {
+  background: #ff6b4a;
+}
+
+.hud-crash {
+  position: absolute;
+  top: 38%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: #ff6b4a;
+  text-shadow: 0 2px 12px rgba(120, 20, 0, 0.7);
+  animation: hud-crash-flash 0.5s steps(2) infinite;
+}
+
+@keyframes hud-crash-flash {
+  50% {
+    opacity: 0.4;
+  }
+}
+
 .hud-music {
   position: absolute;
   bottom: 14px;

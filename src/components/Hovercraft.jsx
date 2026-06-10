@@ -11,6 +11,9 @@ export default function Hovercraft() {
   const leftGlow = useRef()
   const rightGlow = useRef()
   const binder = useRef()
+  const leftEngine = useRef()
+  const rightEngine = useRef()
+  const pod = useRef()
 
   useFrame(({ clock }, dt) => {
     const t = clock.elapsedTime
@@ -27,13 +30,20 @@ export default function Hovercraft() {
       mesh.scale.setScalar(s)
     }
     binder.current.material.opacity = 0.55 + Math.sin(t * 21) * 0.2 + (boosting ? 0.25 : 0)
+
+    // an exploded part vanishes; the binder dies with either engine
+    const dead = gameState.crashPart
+    leftEngine.current.visible = dead !== 'left'
+    rightEngine.current.visible = dead !== 'right'
+    pod.current.visible = dead !== 'pod'
+    binder.current.visible = dead !== 'left' && dead !== 'right'
   })
 
   return (
     <group>
       {/* engines */}
       {[-1.7, 1.7].map((x) => (
-        <group key={x} position={[x, 0, -1.8]}>
+        <group key={x} ref={x < 0 ? leftEngine : rightEngine} position={[x, 0, -1.8]}>
           <mesh rotation={[Math.PI / 2, 0, 0]}>
             <cylinderGeometry args={[0.45, 0.52, 2.8, 12]} />
             <meshStandardMaterial color="#8d7a5e" metalness={0.5} roughness={0.45} />
@@ -76,7 +86,7 @@ export default function Hovercraft() {
       </mesh>
 
       {/* cockpit pod */}
-      <group position={[0, 0.05, 1.8]}>
+      <group ref={pod} position={[0, 0.05, 1.8]}>
         <mesh rotation={[Math.PI / 2, 0, 0]}>
           <capsuleGeometry args={[0.55, 1.1, 6, 12]} />
           <meshStandardMaterial color="#a3754a" metalness={0.35} roughness={0.55} />

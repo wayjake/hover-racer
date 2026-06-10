@@ -13,7 +13,15 @@ import {
   halfWidths,
 } from '../game/track.js'
 import { gameState, resetGameState } from '../game/state.js'
-import { initAudio, setEngine, toggleMute, nextTrack } from '../game/audio.js'
+import {
+  initAudio,
+  setEngine,
+  toggleMute,
+  nextTrack,
+  playScrape,
+  playExplosion,
+} from '../game/audio.js'
+import { emitDebris } from './Debris.jsx'
 import Hovercraft from './Hovercraft.jsx'
 
 const MAX_SPEED = 78
@@ -32,6 +40,43 @@ const keys = {}
 const forward = new THREE.Vector3()
 const desiredCam = new THREE.Vector3()
 const lookTarget = new THREE.Vector3()
+const hitPoint = new THREE.Vector3()
+const hitDir = new THREE.Vector3()
+const partPoint = new THREE.Vector3()
+
+// local offsets of the damageable parts (craft faces -z)
+const PART_OFFSETS = {
+  left: [-1.7, 0, -1.8],
+  right: [1.7, 0, -1.8],
+  pod: [0, 0.05, 1.8],
+}
+
+// world position of a ship part, given craft position and heading
+function partWorld(s, part, out) {
+  const [lx, ly, lz] = PART_OFFSETS[part]
+  const cos = Math.cos(s.heading)
+  const sin = Math.sin(s.heading)
+  return out.set(
+    s.pos.x + lx * cos + lz * sin,
+    s.y + ly,
+    s.pos.z - lx * sin + lz * cos,
+  )
+}
+
+function updateCamera(three, s, dt) {
+  // chase camera, pulls back and widens with speed (extra kick on boost)
+  const camFactor = s.speed / BOOST_MAX_SPEED
+  const cam = three.camera
+  desiredCam
+    .copy(s.pos)
+    .addScaledVector(forward, -(10 + 5 * camFactor))
+    .setY(s.y + 4.2)
+  cam.position.lerp(desiredCam, 1 - Math.exp(-dt * 5))
+  lookTarget.copy(s.pos).addScaledVector(forward, 8).setY(s.y + 1.5)
+  cam.lookAt(lookTarget)
+  cam.fov = 68 + camFactor * 18
+  cam.updateProjectionMatrix()
+}
 
 export default function Player() {
   const group = useRef()
@@ -47,6 +92,7 @@ export default function Player() {
     y: HOVER_HEIGHT,
     vy: 0,
     airborne: false,
+    crashT: 0,
   })
 
   useEffect(() => {
@@ -75,7 +121,76 @@ export default function Player() {
     const dt = Math.min(rawDt, 0.05)
     const s = sim.current
 
-    if (keys.KeyR) reset(s)
+    if (keys.KeyR) {
+      reset(s)
+      craft.current.rotation.set(0, 0, 0)
+    }
+
+    // ----- crash sequence: tumble, burn, bounce, then auto-reset -----
+    if (gameState.crashed) {
+      s.crashT += dt
+      s.speed = Math.max(0, s.speed - 40 * dt)
+      forward.set(-Math.sin(s.heading), 0, -Math.cos(s.heading))
+      s.pos.addScaledVector(forward, s.speed * dt)
+      s.idx = nearestIndex(s.pos, s.idx)
+      const csp = samples[s.idx]
+      const cn = normals[s.idx]
+      const chw = halfWidths[s.idx]
+      const clat = (s.pos.x - csp.x) * cn.x + (s.pos.z - csp.z) * cn.z
+      if (Math.abs(clat) > chw) {
+        const lim = Math.sign(clat) * chw
+        s.pos.x = csp.x + cn.x * lim
+        s.pos.z = csp.z + cn.z * lim
+      }
+
+      // wreck falls under gravity and skips off the ground
+      s.vy -= GRAVITY * dt
+      s.y += s.vy * dt
+      const floorY = heights[s.idx] + 0.55
+      if (s.y < floorY) {
+        s.y = floorY
+        if (s.vy < -4) {
+          hitDir.set(0, 1, 0)
+          emitDebris(s.pos, hitDir, 6, 6, 'rock')
+        }
+        s.vy = -s.vy * 0.35
+        s.speed *= 0.8
+      }
+
+      // each part dies its own way: engines cartwheel the craft toward
+      // their side, a dead pod sends it end over end
+      const spin = Math.exp(-s.crashT * 0.6)
+      if (gameState.crashPart === 'left') {
+        s.heading += 2.6 * spin * dt
+        craft.current.rotation.z += 5.5 * spin * dt
+        craft.current.rotation.x -= 1.1 * spin * dt
+      } else if (gameState.crashPart === 'right') {
+        s.heading -= 2.6 * spin * dt
+        craft.current.rotation.z -= 5.5 * spin * dt
+        craft.current.rotation.x -= 1.1 * spin * dt
+      } else {
+        craft.current.rotation.x -= 7.5 * spin * dt
+        craft.current.rotation.z += Math.sin(s.crashT * 9) * 1.4 * spin * dt
+      }
+
+      // burning trail from the destroyed part
+      if (Math.random() < 0.65) {
+        partWorld(s, gameState.crashPart, partPoint)
+        hitDir.set(0, 1, 0)
+        emitDebris(partPoint, hitDir, 2, 4.5, 'fire')
+      }
+
+      group.current.position.set(s.pos.x, s.y, s.pos.z)
+      group.current.rotation.y = s.heading
+      gameState.speed = s.speed
+      setEngine((s.speed / BOOST_MAX_SPEED) * Math.max(0, 1 - s.crashT / 2), false)
+      updateCamera(three, s, dt)
+      if (s.crashT > 2.6) {
+        reset(s)
+        craft.current.rotation.set(0, 0, 0)
+      }
+      return
+    }
 
     const throttle = keys.KeyW || keys.ArrowUp ? 1 : 0
     const brake = keys.KeyS || keys.ArrowDown ? 1 : 0
@@ -131,10 +246,43 @@ export default function Player() {
     const hw = halfWidths[s.idx]
     const lateral = (s.pos.x - sp.x) * n.x + (s.pos.z - sp.z) * n.z
     if (Math.abs(lateral) > hw) {
-      const lim = Math.sign(lateral) * hw
+      const side = Math.sign(lateral)
+      const lim = side * hw
       s.pos.x = sp.x + n.x * lim
       s.pos.z = sp.z + n.z * lim
-      s.speed *= Math.max(0, 1 - 3.5 * dt) // scraping the wall bleeds speed
+
+      // how squarely we're driving into the wall: 0 = parallel scrape,
+      // 1 = head-on. Slowdown and damage both scale with it.
+      const align = Math.abs(forward.x * n.x + forward.z * n.z)
+      s.speed *= Math.max(0, 1 - (0.6 + 6 * align) * dt)
+      const intensity = Math.min(1, (s.speed / MAX_SPEED) * (0.25 + align * 1.5))
+
+      // chips fly off the wall, away from it and along our travel
+      hitPoint.set(sp.x + n.x * lim * 1.1, s.y + 0.4, sp.z + n.z * lim * 1.1)
+      hitDir.set(-n.x * side + forward.x, 0.7, -n.z * side + forward.z)
+      emitDebris(hitPoint, hitDir, 1 + Math.round(intensity * 4), 4 + intensity * 9, 'rock')
+      playScrape(intensity)
+
+      // grind the part on the wall side; square hits also hurt the pod
+      const part = side > 0 ? 'left' : 'right'
+      const health = gameState.health
+      health[part] = Math.max(0, health[part] - (0.05 + align * 1.7) * (s.speed / MAX_SPEED) * dt)
+      if (align > 0.5) {
+        health.pod = Math.max(0, health.pod - align * (s.speed / MAX_SPEED) * dt)
+      }
+      const dead =
+        health[part] === 0 ? part : health.pod === 0 ? 'pod' : null
+      if (dead && !gameState.finished) {
+        gameState.crashed = true
+        gameState.crashPart = dead
+        s.crashT = 0
+        s.vy = Math.max(s.vy, 6.5)
+        playExplosion()
+        partWorld(s, dead, partPoint)
+        hitDir.set(0, 1, 0)
+        emitDebris(partPoint, hitDir, 40, 14, 'fire')
+        emitDebris(partPoint, hitDir, 14, 9, 'rock')
+      }
     }
 
     // vertical: hover-follow the ground until it falls away, then ballistic
@@ -187,18 +335,7 @@ export default function Player() {
       1 - Math.exp(-dt * 4),
     )
 
-    // chase camera, pulls back and widens with speed (extra kick on boost)
-    const camFactor = s.speed / BOOST_MAX_SPEED
-    const cam = three.camera
-    desiredCam
-      .copy(s.pos)
-      .addScaledVector(forward, -(10 + 5 * camFactor))
-      .setY(s.y + 4.2)
-    cam.position.lerp(desiredCam, 1 - Math.exp(-dt * 5))
-    lookTarget.copy(s.pos).addScaledVector(forward, 8).setY(s.y + 1.5)
-    cam.lookAt(lookTarget)
-    cam.fov = 68 + camFactor * 18
-    cam.updateProjectionMatrix()
+    updateCamera(three, s, dt)
   })
 
   return (
