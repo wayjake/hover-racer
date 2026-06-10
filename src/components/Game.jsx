@@ -3,6 +3,7 @@ import { Canvas } from '@react-three/fiber'
 import Canyon from './Canyon.jsx'
 import Player from './Player.jsx'
 import { gameState } from '../game/state.js'
+import { audioState } from '../game/audio.js'
 import './Game.css'
 
 function formatTime(ms) {
@@ -35,7 +36,22 @@ function Hud() {
         {Math.round(gameState.speed * 4)}
         <span> km/h</span>
       </div>
-      <div className="hud-help">W / ↑ throttle · A D / ← → steer · S / ↓ brake · R restart</div>
+      <div className="hud-boost" data-boosting={gameState.boosting || undefined}>
+        <div
+          className="hud-boost-fill"
+          style={{ width: `${Math.round(gameState.boost * 100)}%` }}
+        />
+      </div>
+      <div className="hud-music">
+        ♪ {audioState.ready
+          ? audioState.muted
+            ? 'muted'
+            : audioState.trackName
+          : 'press any key for sound'}
+      </div>
+      <div className="hud-help">
+        W / ↑ throttle · A D / ← → steer · Shift boost · R restart · M mute · N next track
+      </div>
       {gameState.finished && (
         <div className="hud-finish">
           <div className="hud-finish-title">FINISH</div>

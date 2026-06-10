@@ -3,6 +3,8 @@
 export const gameState = {
   speed: 0,
   progress: 0,
+  boost: 1,
+  boosting: false,
   startTime: performance.now(),
   finished: false,
   finishTime: 0,
@@ -11,6 +13,8 @@ export const gameState = {
 export function resetGameState() {
   gameState.speed = 0
   gameState.progress = 0
+  gameState.boost = 1
+  gameState.boosting = false
   gameState.startTime = performance.now()
   gameState.finished = false
   gameState.finishTime = 0

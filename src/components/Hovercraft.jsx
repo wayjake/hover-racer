@@ -1,5 +1,9 @@
 import { useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
+import * as THREE from 'three'
+import { gameState } from '../game/state.js'
+
+const glowColor = new THREE.Color()
 
 // Twin forward engines linked by an energy binder, cockpit pod trailing
 // behind — podracer-inspired, craft faces -z.
@@ -8,12 +12,21 @@ export default function Hovercraft() {
   const rightGlow = useRef()
   const binder = useRef()
 
-  useFrame(({ clock }) => {
+  useFrame(({ clock }, dt) => {
     const t = clock.elapsedTime
     const flicker = 0.85 + Math.sin(t * 37) * 0.1 + Math.sin(t * 53) * 0.05
-    leftGlow.current.material.opacity = flicker
-    rightGlow.current.material.opacity = flicker
-    binder.current.material.opacity = 0.55 + Math.sin(t * 21) * 0.2
+    // exhaust swells and shifts blue-white while boosting
+    const boosting = gameState.boosting
+    glowColor.set(boosting ? '#bfe6ff' : '#ffae5e')
+    const k = 1 - Math.exp(-dt * 8)
+    for (const ref of [leftGlow, rightGlow]) {
+      const mesh = ref.current
+      mesh.material.opacity = flicker
+      mesh.material.color.lerp(glowColor, k)
+      const s = THREE.MathUtils.lerp(mesh.scale.x, boosting ? 1.8 : 1, k)
+      mesh.scale.setScalar(s)
+    }
+    binder.current.material.opacity = 0.55 + Math.sin(t * 21) * 0.2 + (boosting ? 0.25 : 0)
   })
 
   return (

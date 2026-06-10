@@ -11,9 +11,13 @@ import {
   HALF_WIDTH,
 } from '../game/track.js'
 import { gameState, resetGameState } from '../game/state.js'
+import { initAudio, setEngine, toggleMute, nextTrack } from '../game/audio.js'
 import Hovercraft from './Hovercraft.jsx'
 
 const MAX_SPEED = 62
+const BOOST_MAX_SPEED = 95
+const BOOST_DRAIN_TIME = 1.8 // seconds of boost from a full meter
+const BOOST_RECHARGE_TIME = 6
 const START_IDX = 5
 const FINISH_IDX = COUNT - 12
 
@@ -33,22 +37,29 @@ export default function Player() {
     speed: 0,
     idx: START_IDX,
     bank: 0,
+    boostMeter: 1,
+    boosting: false,
   })
 
   useEffect(() => {
     const down = (e) => {
+      initAudio() // browsers require a user gesture to start audio
       keys[e.code] = true
       if (e.code.startsWith('Arrow')) e.preventDefault()
+      if (e.code === 'KeyM') toggleMute()
+      if (e.code === 'KeyN') nextTrack()
     }
     const up = (e) => {
       keys[e.code] = false
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
+    window.addEventListener('pointerdown', initAudio)
     reset(sim.current)
     return () => {
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
+      window.removeEventListener('pointerdown', initAudio)
     }
   }, [])
 
@@ -64,14 +75,31 @@ export default function Player() {
       (keys.KeyA || keys.ArrowLeft ? 1 : 0) -
       (keys.KeyD || keys.ArrowRight ? 1 : 0)
 
-    // throttle, brake, drag
+    // boost: Shift fires it while the meter lasts, then it recharges
+    const wantBoost = keys.ShiftLeft || keys.ShiftRight
+    if (s.boosting) {
+      if (!wantBoost || s.boostMeter <= 0 || gameState.finished) s.boosting = false
+    } else if (wantBoost && s.boostMeter > 0.25 && !gameState.finished) {
+      s.boosting = true // needs a quarter charge to fire, prevents stuttering
+    }
+
+    // throttle, boost, brake, drag
     if (!gameState.finished) s.speed += throttle * 32 * dt
+    if (s.boosting) {
+      s.boostMeter = Math.max(0, s.boostMeter - dt / BOOST_DRAIN_TIME)
+      s.speed += 55 * dt
+    } else {
+      s.boostMeter = Math.min(1, s.boostMeter + dt / BOOST_RECHARGE_TIME)
+    }
     s.speed -= brake * 45 * dt
     s.speed -= s.speed * (gameState.finished ? 1.4 : 0.32) * dt
-    s.speed = THREE.MathUtils.clamp(s.speed, 0, MAX_SPEED)
+    // over the normal cap (boost just ended), bleed speed off gradually
+    const maxNow = s.boosting ? BOOST_MAX_SPEED : MAX_SPEED
+    if (s.speed > maxNow) s.speed = Math.max(maxNow, s.speed - 30 * dt)
+    s.speed = THREE.MathUtils.clamp(s.speed, 0, BOOST_MAX_SPEED)
 
     // steering scales with speed so you can't pivot in place
-    const speedFactor = s.speed / MAX_SPEED
+    const speedFactor = Math.min(s.speed / MAX_SPEED, 1)
     if (s.speed > 0.5) {
       s.heading += steer * 1.7 * (0.35 + 0.65 * speedFactor) * dt
     }
@@ -98,6 +126,10 @@ export default function Player() {
 
     gameState.speed = s.speed
     gameState.progress = s.idx / FINISH_IDX
+    gameState.boost = s.boostMeter
+    gameState.boosting = s.boosting
+
+    setEngine(s.speed / BOOST_MAX_SPEED, s.boosting)
 
     // hover bob + craft pose
     const t = three.clock.elapsedTime
@@ -114,16 +146,17 @@ export default function Player() {
       1 - Math.exp(-dt * 4),
     )
 
-    // chase camera, pulls back and widens with speed
+    // chase camera, pulls back and widens with speed (extra kick on boost)
+    const camFactor = s.speed / BOOST_MAX_SPEED
     const cam = three.camera
     desiredCam
       .copy(s.pos)
-      .addScaledVector(forward, -(10 + 4 * speedFactor))
+      .addScaledVector(forward, -(10 + 5 * camFactor))
       .setY(hoverY + 4.2)
     cam.position.lerp(desiredCam, 1 - Math.exp(-dt * 5))
     lookTarget.copy(s.pos).addScaledVector(forward, 8).setY(hoverY + 1.5)
     cam.lookAt(lookTarget)
-    cam.fov = 68 + speedFactor * 14
+    cam.fov = 68 + camFactor * 18
     cam.updateProjectionMatrix()
   })
 
@@ -154,5 +187,7 @@ function reset(s) {
   s.speed = 0
   s.idx = START_IDX
   s.bank = 0
+  s.boostMeter = 1
+  s.boosting = false
   resetGameState()
 }
