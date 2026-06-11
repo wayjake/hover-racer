@@ -3,7 +3,8 @@
 export const gameState = {
   speed: 0,
   progress: 0,
-  boost: 1,
+  boost: 0, // 0..1 remaining fraction of the burst that's firing
+  boostCharges: 3,
   boosting: false,
   startTime: performance.now(),
   finished: false,
@@ -32,7 +33,8 @@ export function resumeGame() {
 export function resetGameState() {
   gameState.speed = 0
   gameState.progress = 0
-  gameState.boost = 1
+  gameState.boost = 0
+  gameState.boostCharges = 3
   gameState.boosting = false
   gameState.startTime = performance.now()
   gameState.finished = false

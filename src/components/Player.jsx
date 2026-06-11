@@ -29,12 +29,14 @@ import Hovercraft from './Hovercraft.jsx'
 
 const MAX_SPEED = 78
 const BOOST_MAX_SPEED = 118
-const BOOST_DRAIN_TIME = 1.8 // seconds of boost from a full meter
-const BOOST_RECHARGE_TIME = 6
+const BOOST_DURATION = 1.5 // each burst runs this long, no cancelling
+const BOOST_CHARGES = 3 // bursts per run
 const START_IDX = 5
 const FINISH_IDX = COUNT - 12
 const GRAVITY = 30
 const HOVER_HEIGHT = 1.15
+const MAX_ROLL = (80 * Math.PI) / 180 // full arrow-key bank
+const STALL_SPEED = 30 // below this, pulling up has nothing left to climb with
 const SLOPE_ACCEL = 26 // how hard grades pull on your speed
 
 const keys = {}
@@ -92,7 +94,10 @@ export default function Player() {
     speed: 0,
     idx: START_IDX,
     bank: 0,
-    boostMeter: 1,
+    roll: 0, // commanded bank from the roll keys, in radians
+    boostCharges: BOOST_CHARGES,
+    boostT: 0, // seconds left in the burst that's currently firing
+    boostHeld: false,
     boosting: false,
     pitchIn: 0,
     y: HOVER_HEIGHT,
@@ -105,7 +110,7 @@ export default function Player() {
     const down = (e) => {
       initAudio() // browsers require a user gesture to start audio
       keys[e.code] = true
-      if (e.code.startsWith('Arrow')) e.preventDefault()
+      if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault()
       if (e.code === 'KeyM') toggleMute()
       if (e.code === 'KeyN') nextTrack()
     }
@@ -249,34 +254,44 @@ export default function Player() {
       return
     }
 
-    const throttle = keys.KeyW || keys.ArrowUp || touchInput.throttle ? 1 : 0
-    const brake = keys.KeyS || keys.ArrowDown || touchInput.brake ? 1 : 0
+    // mouse scheme hands steering and pitch to the mouse — WASD does nothing
+    // there. Keyboard scheme flies on WASD and pitches on ↑ ↓.
+    const mouse = controlState.scheme === 'mouse'
+    const throttle = (mouse ? keys.ArrowUp : keys.KeyW) || touchInput.throttle ? 1 : 0
+    const brake = (mouse ? keys.ArrowDown : keys.KeyS) || touchInput.brake ? 1 : 0
     let steer =
-      (keys.KeyA || keys.ArrowLeft || touchInput.left ? 1 : 0) -
-      (keys.KeyD || keys.ArrowRight || touchInput.right ? 1 : 0)
+      ((mouse ? keys.ArrowLeft : keys.KeyA || keys.ArrowLeft) || touchInput.left ? 1 : 0) -
+      ((mouse ? keys.ArrowRight : keys.KeyD || keys.ArrowRight) || touchInput.right ? 1 : 0)
     let pitchInput = 0
-    if (controlState.scheme === 'mouse') {
+    if (mouse) {
       steer = THREE.MathUtils.clamp(steer + mouseIn.steer, -1, 1)
-      pitchInput = mouseIn.pitch
+      pitchInput = -mouseIn.pitch
+    } else {
+      pitchInput = (keys.ArrowDown ? 1 : 0) - (keys.ArrowUp ? 1 : 0)
     }
     s.pitchIn = THREE.MathUtils.lerp(s.pitchIn, pitchInput, 1 - Math.exp(-dt * 8))
 
-    // boost: Shift fires it while the meter lasts, then it recharges
-    const wantBoost = keys.ShiftLeft || keys.ShiftRight || touchInput.boost
-    if (s.boosting) {
-      if (!wantBoost || s.boostMeter <= 0 || gameState.finished) s.boosting = false
-    } else if (wantBoost && s.boostMeter > 0.25 && !gameState.finished) {
-      s.boosting = true // needs a quarter charge to fire, prevents stuttering
+    // boost: Shift or Space fires a full burst — it runs its course and
+    // can't be cancelled. Three per run, one per key press.
+    const wantBoost =
+      keys.ShiftLeft || keys.ShiftRight || keys.Space || touchInput.boost
+    if (s.boostT > 0) {
+      s.boostT = Math.max(0, s.boostT - dt)
+    } else if (
+      wantBoost &&
+      !s.boostHeld && // holding the key doesn't chain into the next charge
+      s.boostCharges > 0 &&
+      !gameState.finished
+    ) {
+      s.boostCharges -= 1
+      s.boostT = BOOST_DURATION
     }
+    s.boostHeld = wantBoost
+    s.boosting = s.boostT > 0 && !gameState.finished
 
     // throttle, boost, brake, drag — jets lose bite while airborne
     if (!gameState.finished) s.speed += throttle * 40 * (s.airborne ? 0.4 : 1) * dt
-    if (s.boosting) {
-      s.boostMeter = Math.max(0, s.boostMeter - dt / BOOST_DRAIN_TIME)
-      s.speed += 55 * dt
-    } else {
-      s.boostMeter = Math.min(1, s.boostMeter + dt / BOOST_RECHARGE_TIME)
-    }
+    if (s.boosting) s.speed += 55 * dt
     s.speed -= brake * 45 * dt
     s.speed -= s.speed * (gameState.finished ? 1.4 : 0.32) * dt
 
@@ -355,11 +370,32 @@ export default function Player() {
     const bob = Math.sin(three.clock.elapsedTime * 7) * 0.08 +
       Math.sin(three.clock.elapsedTime * 13) * 0.04
     const rideY = heights[s.idx] + HOVER_HEIGHT + bob
+
+    // lift fades to nothing as speed drops toward the stall: pull up with
+    // pace and you climb, bleed it off and gravity takes over
+    const lift = THREE.MathUtils.clamp((s.speed - STALL_SPEED) / 25, 0, 1)
+
+    // ground effect: the hover cushion thins exponentially with altitude,
+    // so no amount of speed or boost lets you climb into the sky
+    const groundEffect = Math.exp(-Math.max(0, s.y - rideY) / 6)
+
+    // pulling up with flying speed lifts the craft off the deck
+    if (!s.airborne && s.pitchIn > 0.1 && lift > 0.2) {
+      s.airborne = true
+      s.vy = Math.max(s.vy, 0)
+    }
+
     if (s.airborne) {
       s.vy -= GRAVITY * dt
-      // pitch trades speed for lift: pull up to stretch a jump, dive to drop
-      s.vy += s.pitchIn * 26 * (0.3 + 0.7 * speedFactor) * dt
-      s.speed = Math.max(0, s.speed - s.pitchIn * 10 * dt)
+      if (s.pitchIn > 0) {
+        // climbing spends speed — hold it long enough and you stall out
+        s.vy += s.pitchIn * 52 * lift * groundEffect * dt
+        s.speed = Math.max(0, s.speed - s.pitchIn * 16 * dt)
+      } else {
+        // diving converts altitude into speed
+        s.vy += s.pitchIn * 26 * (0.3 + 0.7 * speedFactor) * dt
+        s.speed -= s.pitchIn * 12 * dt
+      }
       s.y += s.vy * dt
       if (s.y <= rideY) {
         s.y = rideY
@@ -373,6 +409,23 @@ export default function Player() {
       const prevY = s.y
       s.y = rideY
       s.vy = dt > 0 ? (s.y - prevY) / dt : 0
+
+      // nose shoved into the deck — bottoming out grinds off speed and
+      // sprays the floor instead of buying any
+      if (s.pitchIn < -0.12 && s.speed > 3) {
+        const grind = Math.min(1, -s.pitchIn * (0.3 + speedFactor))
+        s.speed *= Math.max(0, 1 - -s.pitchIn * 1.8 * dt)
+        if (Math.random() < 0.25 + grind * 0.5) {
+          partPoint.set(
+            s.pos.x + forward.x * 2.2,
+            heights[s.idx] + 0.25,
+            s.pos.z + forward.z * 2.2,
+          )
+          hitDir.set(-forward.x * 0.7, 1, -forward.z * 0.7)
+          emitDebris(partPoint, hitDir, 1 + Math.round(grind * 3), 4 + grind * 7, 'rock')
+        }
+        playScrape(grind)
+      }
     }
 
     if (!gameState.finished && s.idx >= FINISH_IDX) {
@@ -382,7 +435,8 @@ export default function Player() {
 
     gameState.speed = s.speed
     gameState.progress = s.idx / FINISH_IDX
-    gameState.boost = s.boostMeter
+    gameState.boost = s.boostT / BOOST_DURATION
+    gameState.boostCharges = s.boostCharges
     gameState.boosting = s.boosting
 
     setEngine(s.speed / BOOST_MAX_SPEED, s.boosting)
@@ -397,7 +451,7 @@ export default function Player() {
     // pitch with the grade on the ground, with vertical velocity in the air
     const targetPitch = s.airborne
       ? THREE.MathUtils.clamp(s.vy * 0.02 + s.pitchIn * 0.3, -0.5, 0.45)
-      : Math.atan(slope) * 0.85 - throttle * 0.06 + brake * 0.05 + s.pitchIn * 0.12
+      : Math.atan(slope) * 0.85 - throttle * 0.06 + brake * 0.05 + s.pitchIn * 0.28
     craft.current.rotation.x = THREE.MathUtils.lerp(
       craft.current.rotation.x,
       targetPitch,
@@ -434,7 +488,9 @@ function reset(s) {
   s.speed = 0
   s.idx = START_IDX
   s.bank = 0
-  s.boostMeter = 1
+  s.boostCharges = BOOST_CHARGES
+  s.boostT = 0
+  s.boostHeld = false
   s.boosting = false
   s.pitchIn = 0
   s.y = heights[START_IDX] + HOVER_HEIGHT

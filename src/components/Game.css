@@ -58,6 +58,12 @@
   bottom: 72px;
   left: 20px;
   width: 160px;
+  display: flex;
+  gap: 6px;
+}
+
+.hud-boost-cell {
+  flex: 1;
   height: 8px;
   border-radius: 4px;
   background: rgba(45, 28, 10, 0.45);

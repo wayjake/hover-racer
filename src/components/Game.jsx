@@ -213,10 +213,23 @@ function Hud({ isTouch }) {
         <span> km/h</span>
       </div>
       <div className="hud-boost" data-boosting={gameState.boosting || undefined}>
-        <div
-          className="hud-boost-fill"
-          style={{ width: `${Math.round(gameState.boost * 100)}%` }}
-        />
+        {/* one cell per charge; the firing burst drains its cell */}
+        {[0, 1, 2].map((i) => (
+          <div className="hud-boost-cell" key={i}>
+            <div
+              className="hud-boost-fill"
+              style={{
+                width: `${Math.round(
+                  (i < gameState.boostCharges
+                    ? 1
+                    : i === gameState.boostCharges && gameState.boosting
+                      ? gameState.boost
+                      : 0) * 100,
+                )}%`,
+              }}
+            />
+          </div>
+        ))}
       </div>
       <div className="hud-health">
         {[
