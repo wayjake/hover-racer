@@ -7,12 +7,12 @@ export const SCHEMES = [
   {
     id: 'keyboard',
     name: 'Keyboard',
-    blurb: 'W throttle · S brake · A D / ← → steer · ↑ ↓ pitch · Shift / Space boost',
+    blurb: 'W throttle · S brake · A D steer · ← → roll · ↑ ↓ pitch · Shift / Space boost',
   },
   {
     id: 'mouse',
     name: 'Keyboard + Mouse',
-    blurb: '↑ throttle · ↓ brake · mouse steers & pitches · Shift / Space boost',
+    blurb: '↑ throttle · ↓ brake · mouse steers & pitches · A D roll · Shift / Space boost',
   },
 ]
 

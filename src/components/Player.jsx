@@ -260,8 +260,8 @@ export default function Player() {
     const throttle = (mouse ? keys.ArrowUp : keys.KeyW) || touchInput.throttle ? 1 : 0
     const brake = (mouse ? keys.ArrowDown : keys.KeyS) || touchInput.brake ? 1 : 0
     let steer =
-      ((mouse ? keys.ArrowLeft : keys.KeyA || keys.ArrowLeft) || touchInput.left ? 1 : 0) -
-      ((mouse ? keys.ArrowRight : keys.KeyD || keys.ArrowRight) || touchInput.right ? 1 : 0)
+      ((mouse ? keys.ArrowLeft : keys.KeyA) || touchInput.left ? 1 : 0) -
+      ((mouse ? keys.ArrowRight : keys.KeyD) || touchInput.right ? 1 : 0)
     let pitchInput = 0
     if (mouse) {
       steer = THREE.MathUtils.clamp(steer + mouseIn.steer, -1, 1)
@@ -270,6 +270,13 @@ export default function Player() {
       pitchInput = (keys.ArrowDown ? 1 : 0) - (keys.ArrowUp ? 1 : 0)
     }
     s.pitchIn = THREE.MathUtils.lerp(s.pitchIn, pitchInput, 1 - Math.exp(-dt * 8))
+
+    // roll: bank the craft (← → on keyboard, A D with the mouse scheme) to
+    // carve corners harder than flat steering at the cost of some speed
+    const rollInput = mouse
+      ? (keys.KeyA ? 1 : 0) - (keys.KeyD ? 1 : 0)
+      : (keys.ArrowLeft ? 1 : 0) - (keys.ArrowRight ? 1 : 0)
+    s.roll = THREE.MathUtils.lerp(s.roll, rollInput * MAX_ROLL, 1 - Math.exp(-dt * 4))
 
     // boost: Shift or Space fires a full burst — it runs its course and
     // can't be cancelled. Three per run, one per key press.
@@ -312,6 +319,14 @@ export default function Player() {
     if (s.speed > 0.5) {
       const grip = s.airborne ? 0.35 : 1
       s.heading += steer * 2.0 * grip * (0.35 + 0.65 * speedFactor) * dt
+
+      // banked carve: tipping the jets sideways slices the craft toward the
+      // low wing, harder than flat steering — banking keeps more authority
+      // in the air than flat steering does, but holding it bleeds speed
+      const carve = Math.sin(s.roll)
+      const carveGrip = s.airborne ? 0.55 : 1
+      s.heading += carve * 2.6 * carveGrip * (0.35 + 0.65 * speedFactor) * dt
+      s.speed -= s.speed * Math.abs(carve) * 0.14 * dt
     }
 
     forward.set(-Math.sin(s.heading), 0, -Math.cos(s.heading))
@@ -447,7 +462,11 @@ export default function Player() {
 
     const targetBank = steer * 0.38 * (0.3 + 0.7 * speedFactor)
     s.bank = THREE.MathUtils.lerp(s.bank, targetBank, 1 - Math.exp(-dt * 6))
-    craft.current.rotation.z = s.bank
+    craft.current.rotation.z = THREE.MathUtils.clamp(
+      s.bank + s.roll,
+      -MAX_ROLL,
+      MAX_ROLL,
+    )
     // pitch with the grade on the ground, with vertical velocity in the air
     const targetPitch = s.airborne
       ? THREE.MathUtils.clamp(s.vy * 0.02 + s.pitchIn * 0.3, -0.5, 0.45)
@@ -488,6 +507,7 @@ function reset(s) {
   s.speed = 0
   s.idx = START_IDX
   s.bank = 0
+  s.roll = 0
   s.boostCharges = BOOST_CHARGES
   s.boostT = 0
   s.boostHeld = false
