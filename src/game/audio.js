@@ -67,7 +67,8 @@ function hash(n) {
   let x = (n * 2654435761) >>> 0
   x ^= x >>> 13
   x = (x * 0x5bd1e995) >>> 0
-  x ^= x >>> 15
+  // ^ yields a SIGNED 32-bit int — force unsigned or the hash goes negative
+  x = (x ^ (x >>> 15)) >>> 0
   return x / 4294967296
 }
 
@@ -80,6 +81,14 @@ export function initAudio() {
   // when no Howl has played for a while
   Howler.autoSuspend = false
   Howler.volume(MASTER_VOL) // also forces Howler to create its AudioContext
+
+  // On devices whose sample rate isn't 44.1kHz (any modern Mac: 48kHz),
+  // Howler CLOSES its AudioContext and creates a fresh one the first time
+  // a Howl is constructed (the "mobile unload" workaround in _unlockAudio).
+  // Our first Howl appears asynchronously from buildSfx, which would strand
+  // the whole synth graph on the closed context — so trigger the swap now,
+  // before we capture the context and attach anything to it.
+  Howler._unlockAudio()
   ctx = Howler.ctx
 
   // compressor glues the mix and stops the engine drowning the music; splice
