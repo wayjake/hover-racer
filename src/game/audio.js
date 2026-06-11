@@ -1,5 +1,11 @@
-// All sound is synthesized with the Web Audio API — no audio files.
+// All audio runs through Howler: it owns the AudioContext and master output
+// (volume, mute, autoplay unlock), and one-shot SFX are pre-rendered offline
+// to WAV and played as Howl instances. The engine and music are synthesized
+// live (speed-reactive pitch, procedural sequencing) — Howler can't generate
+// sound, so those Web Audio nodes plug into Howler's master gain instead.
 // initAudio() must be called from a user gesture (browser autoplay policy).
+
+import { Howl, Howler } from 'howler'
 
 export const audioState = {
   ready: false,
@@ -70,16 +76,25 @@ export function initAudio() {
     if (ctx.state === 'suspended') ctx.resume()
     return
   }
-  ctx = new (window.AudioContext || window.webkitAudioContext)()
+  // the synth runs constantly, so Howler must not suspend the shared context
+  // when no Howl has played for a while
+  Howler.autoSuspend = false
+  Howler.volume(MASTER_VOL) // also forces Howler to create its AudioContext
+  ctx = Howler.ctx
 
-  master = ctx.createGain()
-  master.gain.value = MASTER_VOL
-  // compressor glues the mix and stops the engine drowning the music
+  // compressor glues the mix and stops the engine drowning the music; splice
+  // it between Howler's master gain and the speakers so SFX go through it too
   const comp = ctx.createDynamicsCompressor()
   comp.threshold.value = -18
   comp.ratio.value = 6
-  master.connect(comp)
+  Howler.masterGain.disconnect()
+  Howler.masterGain.connect(comp)
   comp.connect(ctx.destination)
+
+  // everything synthesized feeds this bus, then Howler's master gain
+  master = ctx.createGain()
+  master.gain.value = 1
+  master.connect(Howler.masterGain)
 
   engineBus = ctx.createGain()
   engineBus.gain.value = 0.6
@@ -101,11 +116,9 @@ export function initAudio() {
   feedback.connect(delay)
   delay.connect(musicBus)
 
-  const noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate)
-  const data = noise.getChannelData(0)
-  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1
-  sharedNoise = noise
+  sharedNoise = makeNoise(ctx, 1)
 
+  buildSfx()
   buildEngine()
   startMusic()
   audioState.ready = true
@@ -114,7 +127,7 @@ export function initAudio() {
 export function toggleMute() {
   if (!ctx) return
   audioState.muted = !audioState.muted
-  master.gain.setTargetAtTime(audioState.muted ? 0 : MASTER_VOL, ctx.currentTime, 0.05)
+  Howler.mute(audioState.muted)
 }
 
 // ---------------------------------------------------------------- engine ---
@@ -321,57 +334,130 @@ function stopDrone() {
 }
 
 // ------------------------------------------------------------------ sfx ---
+// One-shots are rendered once in an OfflineAudioContext, encoded to WAV, and
+// handed to Howler — playback gets Howl pooling, per-id volume, and rate.
 
+let scrapeHowls = []
+let explosionHowl = null
 let lastScrape = 0
+
+function buildSfx() {
+  // gritty wall-scrape noise burst; three bandpass variants stand in for the
+  // old per-play random filter frequency
+  ;[650, 1100, 1750].forEach((freq, i) => {
+    renderToHowl(0.15, (oc) => {
+      const src = oc.createBufferSource()
+      src.buffer = makeNoise(oc, 0.15)
+      const f = oc.createBiquadFilter()
+      f.type = 'bandpass'
+      f.frequency.value = freq
+      f.Q.value = 1.2
+      const g = oc.createGain()
+      g.gain.setValueAtTime(1, 0)
+      g.gain.exponentialRampToValueAtTime(0.004, 0.12)
+      src.connect(f)
+      f.connect(g)
+      g.connect(oc.destination)
+      src.start(0)
+    }).then((h) => {
+      scrapeHowls[i] = h
+    })
+  })
+
+  // deep boom + noise blast; rendered at reduced gain so the sum can't clip
+  // the 16-bit WAV — the compressor squashes the level difference anyway
+  renderToHowl(1.2, (oc) => {
+    const boom = oc.createOscillator()
+    boom.frequency.setValueAtTime(120, 0)
+    boom.frequency.exponentialRampToValueAtTime(28, 0.7)
+    const bg = oc.createGain()
+    bg.gain.setValueAtTime(0.5, 0)
+    bg.gain.exponentialRampToValueAtTime(0.001, 1.1)
+    boom.connect(bg)
+    bg.connect(oc.destination)
+    boom.start(0)
+    boom.stop(1.2)
+
+    const src = oc.createBufferSource()
+    src.buffer = makeNoise(oc, 1.1)
+    const f = oc.createBiquadFilter()
+    f.type = 'lowpass'
+    f.frequency.setValueAtTime(5000, 0)
+    f.frequency.exponentialRampToValueAtTime(300, 0.9)
+    const g = oc.createGain()
+    g.gain.setValueAtTime(0.39, 0)
+    g.gain.exponentialRampToValueAtTime(0.001, 1)
+    src.connect(f)
+    f.connect(g)
+    g.connect(oc.destination)
+    src.start(0)
+  }).then((h) => {
+    explosionHowl = h
+  })
+}
 
 // Gritty noise burst when grinding the canyon wall; intensity 0..1
 export function playScrape(intensity) {
   if (!ctx || ctx.currentTime - lastScrape < 0.09) return
+  const howl = scrapeHowls[Math.floor(Math.random() * scrapeHowls.length)]
+  if (!howl) return // still rendering
   lastScrape = ctx.currentTime
-  const t = ctx.currentTime
-  const src = ctx.createBufferSource()
-  src.buffer = sharedNoise
-  const f = ctx.createBiquadFilter()
-  f.type = 'bandpass'
-  f.frequency.value = 500 + Math.random() * 1500
-  f.Q.value = 1.2
-  const g = ctx.createGain()
-  g.gain.setValueAtTime(0.05 + intensity * 0.22, t)
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.12)
-  src.connect(f)
-  f.connect(g)
-  g.connect(master)
-  src.start(t, Math.random())
-  src.stop(t + 0.15)
+  const id = howl.play()
+  howl.volume(0.05 + intensity * 0.22, id)
+  howl.rate(0.8 + Math.random() * 0.5, id)
 }
 
 // Deep boom + noise blast when a part of the ship explodes
 export function playExplosion() {
-  if (!ctx) return
-  const t = ctx.currentTime
-  const boom = ctx.createOscillator()
-  boom.frequency.setValueAtTime(120, t)
-  boom.frequency.exponentialRampToValueAtTime(28, t + 0.7)
-  const bg = ctx.createGain()
-  bg.gain.setValueAtTime(0.9, t)
-  bg.gain.exponentialRampToValueAtTime(0.001, t + 1.1)
-  boom.connect(bg)
-  bg.connect(master)
-  boom.start(t)
-  boom.stop(t + 1.2)
+  if (!explosionHowl) return
+  const id = explosionHowl.play()
+  explosionHowl.rate(0.92 + Math.random() * 0.16, id)
+}
 
-  const src = ctx.createBufferSource()
-  src.buffer = sharedNoise
-  const f = ctx.createBiquadFilter()
-  f.type = 'lowpass'
-  f.frequency.setValueAtTime(5000, t)
-  f.frequency.exponentialRampToValueAtTime(300, t + 0.9)
-  const g = ctx.createGain()
-  g.gain.setValueAtTime(0.7, t)
-  g.gain.exponentialRampToValueAtTime(0.001, t + 1)
-  src.connect(f)
-  f.connect(g)
-  g.connect(master)
-  src.start(t)
-  src.stop(t + 1.1)
+// -------------------------------------------------------------- helpers ---
+
+function makeNoise(audioCtx, seconds) {
+  const buffer = audioCtx.createBuffer(
+    1,
+    Math.ceil(seconds * audioCtx.sampleRate),
+    audioCtx.sampleRate,
+  )
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1
+  return buffer
+}
+
+async function renderToHowl(duration, build) {
+  const rate = ctx.sampleRate
+  const oc = new OfflineAudioContext(1, Math.ceil(duration * rate), rate)
+  build(oc)
+  const rendered = await oc.startRendering()
+  const url = URL.createObjectURL(new Blob([encodeWav(rendered)], { type: 'audio/wav' }))
+  return new Howl({ src: [url], format: ['wav'] })
+}
+
+// mono 16-bit PCM WAV
+function encodeWav(buffer) {
+  const data = buffer.getChannelData(0)
+  const out = new DataView(new ArrayBuffer(44 + data.length * 2))
+  const str = (off, s) => {
+    for (let i = 0; i < s.length; i++) out.setUint8(off + i, s.charCodeAt(i))
+  }
+  str(0, 'RIFF')
+  out.setUint32(4, 36 + data.length * 2, true)
+  str(8, 'WAVE')
+  str(12, 'fmt ')
+  out.setUint32(16, 16, true)
+  out.setUint16(20, 1, true) // PCM
+  out.setUint16(22, 1, true) // mono
+  out.setUint32(24, buffer.sampleRate, true)
+  out.setUint32(28, buffer.sampleRate * 2, true)
+  out.setUint16(32, 2, true)
+  out.setUint16(34, 16, true)
+  str(36, 'data')
+  out.setUint32(40, data.length * 2, true)
+  for (let i = 0; i < data.length; i++) {
+    out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, data[i])) * 0x7fff, true)
+  }
+  return out.buffer
 }

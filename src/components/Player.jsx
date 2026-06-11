@@ -12,7 +12,10 @@ import {
   slopes,
   halfWidths,
 } from '../game/track.js'
-import { gameState, resetGameState } from '../game/state.js'
+import { gameState, resetGameState, pauseGame } from '../game/state.js'
+import { touchInput } from '../game/touch.js'
+import { controlState } from '../game/controls.js'
+import { requestMouseLock } from '../game/pointerlock.js'
 import {
   initAudio,
   setEngine,
@@ -35,6 +38,8 @@ const HOVER_HEIGHT = 1.15
 const SLOPE_ACCEL = 26 // how hard grades pull on your speed
 
 const keys = {}
+// mouse position mapped to -1..1 around screen center ('mouse' scheme only)
+const mouseIn = { steer: 0, pitch: 0 }
 
 // scratch vectors, reused every frame
 const forward = new THREE.Vector3()
@@ -89,6 +94,7 @@ export default function Player() {
     bank: 0,
     boostMeter: 1,
     boosting: false,
+    pitchIn: 0,
     y: HOVER_HEIGHT,
     vy: 0,
     airborne: false,
@@ -106,14 +112,59 @@ export default function Player() {
     const up = (e) => {
       keys[e.code] = false
     }
+    const move = (e) => {
+      if (e.pointerType === 'touch') return
+      if (document.pointerLockElement) {
+        // locked: relative movement drives a virtual stick that holds
+        // its deflection until moved back
+        mouseIn.steer = THREE.MathUtils.clamp(mouseIn.steer - e.movementX / 200, -1, 1)
+        mouseIn.pitch = THREE.MathUtils.clamp(mouseIn.pitch - e.movementY / 200, -1, 1)
+      } else {
+        // unlocked fallback: absolute position around screen center
+        const cx = window.innerWidth / 2
+        const cy = window.innerHeight / 2
+        mouseIn.steer = THREE.MathUtils.clamp((cx - e.clientX) / (cx * 0.7), -1, 1)
+        mouseIn.pitch = THREE.MathUtils.clamp((cy - e.clientY) / (cy * 0.7), -1, 1)
+      }
+    }
+    const pointerDown = (e) => {
+      initAudio()
+      // clicking the game with the mouse scheme active captures the cursor
+      if (
+        e.pointerType !== 'touch' &&
+        controlState.scheme === 'mouse' &&
+        !gameState.paused
+      ) {
+        requestMouseLock()
+      }
+    }
+    const lockChange = () => {
+      if (document.pointerLockElement) {
+        // start from a centered stick on every capture
+        mouseIn.steer = 0
+        mouseIn.pitch = 0
+      } else if (
+        controlState.scheme === 'mouse' &&
+        !gameState.paused &&
+        !gameState.finished
+      ) {
+        // Esc releases the lock without a keydown we can see — treat
+        // losing the cursor mid-race as opening the pause menu
+        pauseGame()
+      }
+    }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
-    window.addEventListener('pointerdown', initAudio)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerdown', pointerDown)
+    document.addEventListener('pointerlockchange', lockChange)
     reset(sim.current)
     return () => {
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
-      window.removeEventListener('pointerdown', initAudio)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerdown', pointerDown)
+      document.removeEventListener('pointerlockchange', lockChange)
     }
   }, [])
 
@@ -121,7 +172,13 @@ export default function Player() {
     const dt = Math.min(rawDt, 0.05)
     const s = sim.current
 
-    if (keys.KeyR) {
+    if (gameState.paused) {
+      setEngine(0, false)
+      return
+    }
+
+    if (keys.KeyR || touchInput.restart) {
+      touchInput.restart = false
       reset(s)
       craft.current.rotation.set(0, 0, 0)
     }
@@ -192,14 +249,20 @@ export default function Player() {
       return
     }
 
-    const throttle = keys.KeyW || keys.ArrowUp ? 1 : 0
-    const brake = keys.KeyS || keys.ArrowDown ? 1 : 0
-    const steer =
-      (keys.KeyA || keys.ArrowLeft ? 1 : 0) -
-      (keys.KeyD || keys.ArrowRight ? 1 : 0)
+    const throttle = keys.KeyW || keys.ArrowUp || touchInput.throttle ? 1 : 0
+    const brake = keys.KeyS || keys.ArrowDown || touchInput.brake ? 1 : 0
+    let steer =
+      (keys.KeyA || keys.ArrowLeft || touchInput.left ? 1 : 0) -
+      (keys.KeyD || keys.ArrowRight || touchInput.right ? 1 : 0)
+    let pitchInput = 0
+    if (controlState.scheme === 'mouse') {
+      steer = THREE.MathUtils.clamp(steer + mouseIn.steer, -1, 1)
+      pitchInput = mouseIn.pitch
+    }
+    s.pitchIn = THREE.MathUtils.lerp(s.pitchIn, pitchInput, 1 - Math.exp(-dt * 8))
 
     // boost: Shift fires it while the meter lasts, then it recharges
-    const wantBoost = keys.ShiftLeft || keys.ShiftRight
+    const wantBoost = keys.ShiftLeft || keys.ShiftRight || touchInput.boost
     if (s.boosting) {
       if (!wantBoost || s.boostMeter <= 0 || gameState.finished) s.boosting = false
     } else if (wantBoost && s.boostMeter > 0.25 && !gameState.finished) {
@@ -294,6 +357,9 @@ export default function Player() {
     const rideY = heights[s.idx] + HOVER_HEIGHT + bob
     if (s.airborne) {
       s.vy -= GRAVITY * dt
+      // pitch trades speed for lift: pull up to stretch a jump, dive to drop
+      s.vy += s.pitchIn * 26 * (0.3 + 0.7 * speedFactor) * dt
+      s.speed = Math.max(0, s.speed - s.pitchIn * 10 * dt)
       s.y += s.vy * dt
       if (s.y <= rideY) {
         s.y = rideY
@@ -330,8 +396,8 @@ export default function Player() {
     craft.current.rotation.z = s.bank
     // pitch with the grade on the ground, with vertical velocity in the air
     const targetPitch = s.airborne
-      ? THREE.MathUtils.clamp(s.vy * 0.02, -0.35, 0.3)
-      : Math.atan(slope) * 0.85 - throttle * 0.06 + brake * 0.05
+      ? THREE.MathUtils.clamp(s.vy * 0.02 + s.pitchIn * 0.3, -0.5, 0.45)
+      : Math.atan(slope) * 0.85 - throttle * 0.06 + brake * 0.05 + s.pitchIn * 0.12
     craft.current.rotation.x = THREE.MathUtils.lerp(
       craft.current.rotation.x,
       targetPitch,
@@ -370,6 +436,7 @@ function reset(s) {
   s.bank = 0
   s.boostMeter = 1
   s.boosting = false
+  s.pitchIn = 0
   s.y = heights[START_IDX] + HOVER_HEIGHT
   s.vy = 0
   s.airborne = false

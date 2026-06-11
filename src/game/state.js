@@ -12,6 +12,21 @@ export const gameState = {
   health: { left: 1, right: 1, pod: 1 },
   crashed: false,
   crashPart: null, // 'left' | 'right' | 'pod'
+  paused: false,
+  pausedAt: 0,
+}
+
+export function pauseGame() {
+  if (gameState.paused || gameState.finished) return
+  gameState.paused = true
+  gameState.pausedAt = performance.now()
+}
+
+export function resumeGame() {
+  if (!gameState.paused) return
+  gameState.paused = false
+  // don't let time spent in the menu count against the run
+  gameState.startTime += performance.now() - gameState.pausedAt
 }
 
 export function resetGameState() {
@@ -27,4 +42,5 @@ export function resetGameState() {
   gameState.health.pod = 1
   gameState.crashed = false
   gameState.crashPart = null
+  gameState.paused = false
 }
